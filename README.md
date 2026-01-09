@@ -56,7 +56,3 @@ InterviewGym AI is a modern web application designed to help job seekers prepare
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-## 📄 License
-
-MIT
-
