@@ -9,6 +9,7 @@ import { ChevronLeft, ChevronRight, Save } from 'lucide-react'
 import { saveSession, evaluateSessionAnswers } from '@/app/actions'
 import { Loader2 } from 'lucide-react'
 import { Question, Evaluation } from '@/lib/types'
+import { AnswerRecorder } from './media-recorder'
 
 interface InterviewSessionProps {
     questions: Question[];
@@ -106,6 +107,16 @@ export function InterviewSession({ questions, resumeText, jobDescription, onComp
                             setAnswers(newAnswers);
                         }}
                     />
+
+                    <div className="mt-6 flex justify-center">
+                        <AnswerRecorder onTranscriptionComplete={(text) => {
+                            const newAnswers = [...answers];
+                            // Append transcription to existing text or replace if empty
+                            const currentText = newAnswers[currentIndex] || '';
+                            newAnswers[currentIndex] = currentText ? `${currentText} ${text}` : text;
+                            setAnswers(newAnswers);
+                        }} />
+                    </div>
                 </CardContent>
                 <CardFooter className="flex justify-between bg-muted/5 p-6 border-t">
                     <Button variant="outline" onClick={handlePrev} disabled={currentIndex === 0} className="gap-2">

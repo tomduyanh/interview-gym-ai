@@ -93,3 +93,26 @@ export async function evaluateAnswer(question: string, answer: string) {
     };
   }
 }
+
+export async function transcribeAudio(audioBuffer: Buffer, mimeType: string) {
+  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+
+  const prompt = "Transcribe the following audio of an interview answer exactly as spoken. Do not add any commentary, timestamps, or speaker labels. Just the text.";
+
+  try {
+    const result = await model.generateContent([
+      prompt,
+      {
+        inlineData: {
+          data: audioBuffer.toString("base64"),
+          mimeType: mimeType,
+        },
+      },
+    ]);
+    const response = await result.response;
+    return response.text().trim();
+  } catch (error) {
+    console.error("Transcription Error:", error);
+    throw new Error("Failed to transcribe audio.");
+  }
+}

@@ -1,7 +1,7 @@
 'use server';
 
 import { parsePDF } from "@/lib/pdf-parser";
-import { generateQuestions, evaluateAnswer } from "@/lib/gemini";
+import { generateQuestions, evaluateAnswer, transcribeAudio } from "@/lib/gemini";
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 import { createClient } from "@supabase/supabase-js";
@@ -55,6 +55,11 @@ export async function generateInterviewQuestions(formData: FormData) {
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : "Unknown error";
         console.error("Error in generateInterviewQuestions:", error);
+
+        if (message.includes("429")) {
+            return { success: false, error: "AI Service is busy (Quota Exceeded). Please try again in a minute." };
+        }
+
         return { success: false, error: message };
     }
 }
@@ -84,6 +89,29 @@ export async function evaluateSessionAnswers(sessionId: string) {
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : "Unknown error";
         console.error("Evaluation Error:", error);
+        return { success: false, error: message };
+    }
+}
+
+export async function transcribeAudioAction(formData: FormData) {
+    try {
+        const file = formData.get('audio') as File;
+        if (!file) throw new Error("No audio file provided");
+
+        const arrayBuffer = await file.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        const mimeType = file.type || 'audio/webm';
+
+        const text = await transcribeAudio(buffer, mimeType);
+        return { success: true, text };
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        console.error("Transcription Action Error:", error);
+
+        if (message.includes("429")) {
+            return { success: false, error: "Transcription Service Busy. Please wait a moment." };
+        }
+
         return { success: false, error: message };
     }
 }
