@@ -1,27 +1,36 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardFooter, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
-import { ChevronLeft, ChevronRight, Save } from 'lucide-react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { saveSession, evaluateSessionAnswers } from '@/app/actions'
 import { Loader2 } from 'lucide-react'
-import { Question, Evaluation } from '@/lib/types'
+import { Question, VideoRecording, EnhancedEvaluation } from '@/lib/types'
 import { AnswerRecorder } from './media-recorder'
 
 interface InterviewSessionProps {
     questions: Question[];
     resumeText: string;
     jobDescription: string;
-    onCompleted: (evaluations: Evaluation[]) => void;
+    onCompleted: (evaluations: EnhancedEvaluation[]) => void;
 }
 
 export function InterviewSession({ questions, resumeText, jobDescription, onCompleted }: InterviewSessionProps) {
     const [currentIndex, setCurrentIndex] = useState(0)
     const [answers, setAnswers] = useState<string[]>(new Array(questions.length).fill(''))
+    const [videoUrls, setVideoUrls] = useState<VideoRecording[]>([])
+    const [sessionId, setSessionId] = useState<string>('')
     const [loading, setLoading] = useState(false)
+    const [isProcessingRecord, setIsProcessingRecord] = useState(false)
+
+    // Generate temporary sessionId on mount for video uploads
+    useEffect(() => {
+        setSessionId(`temp-${Date.now()}-${Math.random().toString(36).substring(7)}`);
+    }, []);
+
 
     if (!questions || questions.length === 0) {
         return <div className="p-8 text-center">No questions generated. Please try again or check the server logs.</div>;
@@ -41,16 +50,16 @@ export function InterviewSession({ questions, resumeText, jobDescription, onComp
         } else {
             setLoading(true)
             try {
-                const saveResult = await saveSession(questions, answers, resumeText, jobDescription);
+                const saveResult = await saveSession(questions, answers, resumeText, jobDescription, videoUrls);
                 if (saveResult.success && saveResult.session) {
                     const evalResult = await evaluateSessionAnswers(saveResult.session.id);
                     if (evalResult.success && evalResult.evaluations) {
                         onCompleted(evalResult.evaluations);
                     } else {
-                        alert("Failed to evaluate answers.");
+                        alert(`Failed to evaluate answers: ${evalResult.error}`);
                     }
                 } else {
-                    alert("Failed to save session.");
+                    alert(`Failed to save session: ${saveResult.error}`);
                 }
             } catch (e) {
                 console.error("Failed to complete session:", e)
@@ -72,10 +81,15 @@ export function InterviewSession({ questions, resumeText, jobDescription, onComp
                     <Loader2 className="h-12 w-12 text-primary animate-spin" />
                 </div>
                 <CardTitle className="text-2xl">Evaluating Your Performance...</CardTitle>
-                <CardDescription>Our AI coach is reviewing your answers based on Clarity, Relevance, and STAR structure.</CardDescription>
+                <CardDescription>
+                    Our AI coach is analyzing your answers using the STAR framework
+                    {videoUrls.length > 0 && ' and evaluating your body language from the video recordings'}
+                    . This may take a moment.
+                </CardDescription>
             </Card>
         )
     }
+
 
     return (
         <div className="max-w-3xl mx-auto space-y-8 animate-in fade-in-50 duration-500">
@@ -109,21 +123,39 @@ export function InterviewSession({ questions, resumeText, jobDescription, onComp
                     />
 
                     <div className="mt-6 flex justify-center">
-                        <AnswerRecorder onTranscriptionComplete={(text) => {
-                            const newAnswers = [...answers];
-                            // Append transcription to existing text or replace if empty
-                            const currentText = newAnswers[currentIndex] || '';
-                            newAnswers[currentIndex] = currentText ? `${currentText} ${text}` : text;
-                            setAnswers(newAnswers);
-                        }} />
+                        <AnswerRecorder
+                            sessionId={sessionId}
+                            questionIndex={currentIndex}
+                            onTranscriptionComplete={(text) => {
+                                const newAnswers = [...answers];
+                                // Append transcription to existing text or replace if empty
+                                const currentText = newAnswers[currentIndex] || '';
+                                newAnswers[currentIndex] = currentText ? `${currentText} ${text}` : text;
+                                setAnswers(newAnswers);
+                            }}
+                            onVideoUploaded={(videoRecording) => {
+                                setVideoUrls(prev => {
+                                    // Remove any existing video for this question and add new one
+                                    const filtered = prev.filter(v => v.questionIndex !== currentIndex);
+                                    return [...filtered, videoRecording];
+                                });
+                            }}
+                            onProcessingChange={setIsProcessingRecord}
+                        />
                     </div>
                 </CardContent>
                 <CardFooter className="flex justify-between bg-muted/5 p-6 border-t">
                     <Button variant="outline" onClick={handlePrev} disabled={currentIndex === 0} className="gap-2">
                         <ChevronLeft className="h-4 w-4" /> Previous
                     </Button>
-                    <Button onClick={handleNext} className="gap-2 px-8">
-                        {currentIndex === questions.length - 1 ? 'Finish & Evaluate' : 'Next Question'} <ChevronRight className="h-4 w-4" />
+                    <Button onClick={handleNext} disabled={isProcessingRecord} className="gap-2 px-8">
+                        {isProcessingRecord ? (
+                            <><Loader2 className="h-4 w-4 animate-spin" /> Processing...</>
+                        ) : currentIndex === questions.length - 1 ? (
+                            'Finish & Evaluate'
+                        ) : (
+                            <>Next Question <ChevronRight className="h-4 w-4" /></>
+                        )}
                     </Button>
                 </CardFooter>
             </Card>

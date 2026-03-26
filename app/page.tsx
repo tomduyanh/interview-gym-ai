@@ -2,13 +2,13 @@
 import { useState } from 'react'
 import { CreateSessionForm, SessionContext } from '@/components/create-session-form'
 import { InterviewSession } from '@/components/interview-session'
-import { InterviewReport } from '@/components/interview-report'
-import { Evaluation } from '@/lib/types'
+import { EvaluationDisplay } from '@/components/evaluation-display'
+import { EnhancedEvaluation } from '@/lib/types'
 import { BrainCircuit } from 'lucide-react'
 
 export default function Home() {
   const [sessionData, setSessionData] = useState<SessionContext | null>(null)
-  const [evaluationResults, setEvaluationResults] = useState<Evaluation[] | null>(null)
+  const [evaluationResults, setEvaluationResults] = useState<EnhancedEvaluation[] | null>(null)
 
   return (
     <main className="min-h-screen bg-background p-6 md:p-12 font-sans">
@@ -26,7 +26,7 @@ export default function Home() {
 
         <div className="w-full">
           {evaluationResults ? (
-            <InterviewReport evaluations={evaluationResults} />
+            <EvaluationDisplay evaluations={evaluationResults} />
           ) : sessionData ? (
             <InterviewSession
               questions={sessionData.questions}

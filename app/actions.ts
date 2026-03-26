@@ -1,15 +1,17 @@
 'use server';
 
 import { parsePDF } from "@/lib/pdf-parser";
-import { generateQuestions, evaluateAnswer, transcribeAudio } from "@/lib/gemini";
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-import { createClient } from "@supabase/supabase-js";
-import { Question } from "@/lib/types";
+import { generateQuestions, transcribeAudio, evaluateAnswerWithSTAR, analyzeBodyLanguage } from "@/lib/gemini";
+import { supabase } from "@/lib/supabase";
+import { Question, VideoRecording, EnhancedEvaluation, BodyLanguageMetrics } from "@/lib/types";
 
-const supabase = createClient(supabaseUrl, supabaseKey);
-
-export async function saveSession(questions: Question[], answers: string[], resumeText: string, jobDescription: string) {
+export async function saveSession(
+    questions: Question[],
+    answers: string[],
+    resumeText: string,
+    jobDescription: string,
+    videoUrls: VideoRecording[] = []
+) {
     try {
         // Merge questions and answers for storage
         const sessionData = questions.map((q, i) => ({
@@ -22,6 +24,9 @@ export async function saveSession(questions: Question[], answers: string[], resu
             .insert({
                 questions: sessionData,
                 resume_snapshot: resumeText,
+                job_description: jobDescription,
+                video_urls: videoUrls,
+                analysis_status: videoUrls.length > 0 ? 'pending' : 'completed'
             })
             .select()
             .single();
@@ -73,22 +78,105 @@ export async function evaluateSessionAnswers(sessionId: string) {
 
         if (fetchError) throw new Error(fetchError.message);
 
-        const evaluations = [];
-        for (const item of session.questions) {
-            const evaluation = await evaluateAnswer(item.content, item.answer);
-            evaluations.push({
+        // Update status to processing
+        await supabase
+            .from('interview_sessions')
+            .update({ analysis_status: 'processing' })
+            .eq('id', sessionId);
+
+        const enhancedEvaluations: EnhancedEvaluation[] = [];
+        const videoUrls: VideoRecording[] = session.video_urls || [];
+        const visualAnalysisMap: Record<number, BodyLanguageMetrics> = {};
+
+        for (let i = 0; i < session.questions.length; i++) {
+            const item = session.questions[i];
+
+            // Content evaluation using STAR framework
+            const starScore = await evaluateAnswerWithSTAR(item.content, item.answer);
+
+            // Visual evaluation if video exists
+            let visualMetrics: BodyLanguageMetrics | undefined;
+            const videoRecord = videoUrls.find(v => v.questionIndex === i);
+
+            if (videoRecord && videoRecord.url) {
+                try {
+                    // Fetch the video from the public URL
+                    const response = await fetch(videoRecord.url);
+                    if (response.ok) {
+                        const arrayBuffer = await response.arrayBuffer();
+                        const buffer = Buffer.from(arrayBuffer);
+                        visualMetrics = await analyzeBodyLanguage(buffer, videoRecord.mimeType);
+                        visualAnalysisMap[i] = visualMetrics;
+                    } else {
+                        console.error(`Failed to fetch video from URL: ${videoRecord.url}, status: ${response.status}`);
+                    }
+                } catch (error) {
+                    console.error(`Failed to analyze video for question ${i}:`, error);
+                    // Continue without visual metrics
+                }
+            }
+
+            // Calculate combined score (70% content, 30% visual)
+            let combinedScore = starScore.overallSTAR * 0.7;
+            if (visualMetrics) {
+                combinedScore += visualMetrics.overallPresence * 0.3;
+            } else {
+                // If no video, use 100% content score
+                combinedScore = starScore.overallSTAR;
+            }
+
+            // Generate recommendations
+            const recommendations: string[] = [];
+
+            // STAR recommendations
+            if (starScore.situation < 3) recommendations.push("Provide more context about the situation");
+            if (starScore.task < 3) recommendations.push("Clearly define your specific responsibility");
+            if (starScore.action < 3) recommendations.push("Explain the concrete actions you took in more detail");
+            if (starScore.result < 3) recommendations.push("Include measurable outcomes and impact");
+
+            // Visual recommendations
+            if (visualMetrics) {
+                if (visualMetrics.eyeContact < 3) recommendations.push("Maintain more consistent eye contact with the camera");
+                if (visualMetrics.facialConfidence < 3) recommendations.push("Work on conveying confidence through facial expressions");
+                if (visualMetrics.gestures < 3) recommendations.push("Use natural hand gestures to emphasize key points");
+                if (visualMetrics.posture < 3) recommendations.push("Maintain an upright, confident posture");
+                if (visualMetrics.headTouching < 3) recommendations.push("Reduce nervous self-touching (hair, face, neck) — keep hands relaxed and still");
+                if (visualMetrics.speakingVolume < 3) recommendations.push("Speak louder and more clearly — project your voice with confidence");
+            }
+
+            enhancedEvaluations.push({
+                questionIndex: i,
                 question: item.content,
                 answer: item.answer,
-                evaluation
+                videoUrl: videoRecord?.url,
+                starScore,
+                visualMetrics,
+                combinedScore,
+                recommendations
             });
         }
 
-        // Save evaluations back to session or a separate results table
-        // For now, let's just return them. In a real app, we'd update the session.
-        return { success: true, evaluations };
+        // Update session with enhanced evaluations and visual analysis
+        await supabase
+            .from('interview_sessions')
+            .update({
+                enhanced_evaluations: enhancedEvaluations,
+                visual_analysis: visualAnalysisMap,
+                analysis_status: 'completed'
+            })
+            .eq('id', sessionId);
+
+        return { success: true, evaluations: enhancedEvaluations };
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : "Unknown error";
         console.error("Evaluation Error:", error);
+
+        // Update status to failed
+        await supabase
+            .from('interview_sessions')
+            .update({ analysis_status: 'failed' })
+            .eq('id', sessionId);
+
         return { success: false, error: message };
     }
 }
@@ -115,3 +203,4 @@ export async function transcribeAudioAction(formData: FormData) {
         return { success: false, error: message };
     }
 }
+
